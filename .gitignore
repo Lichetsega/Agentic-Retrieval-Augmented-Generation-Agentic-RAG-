@@ -1,15 +1,15 @@
 # Virtual Environments
-.venv/
+**/.venv/
 venv/
 ENV/
 
 # Python Cache
-__pycache__/
+**/__pycache__/
 *.py[cod]
 
 # Sensitive keys and environments
-.env
-.env.*
+**/.env
+**/.env.*
 credentials/
 *.pem
 
@@ -24,5 +24,7 @@ faiss_index/
 .DS_Store
 Thumbs.db
 
+**/.ipynb_checkpoints/
+**/data/
 .idea/
 backup/

@@ -1,0 +1,41 @@
+# Core LangChain
+langchain==0.1.20
+langchain-core==0.1.52
+langchain-community==0.0.38
+
+# Google AI (For Gemini) - Use these compatible versions
+langchain-google-genai==1.0.2
+google-generativeai==0.5.0
+rank-bm25==0.2.2
+flask==2.3.2
+flask-cors==4.0.1
+gunicorn==22.0.0
+
+# Vector Store
+langchain-chroma==0.1.0
+chromadb==0.4.24
+posthog==2.4.2
+
+# Embeddings
+sentence-transformers==2.3.1
+
+beautifulsoup4==4.12.3
+bs4==0.0.2
+html2text==2024.2.26
+requests==2.31.0
+selenium==4.18.1
+webdriver-manager==4.0.1
+
+# Utilities
+python-dotenv==1.0.1
+tqdm==4.66.2
+markdown==3.5.2
+
+# Streamlit
+streamlit==1.32.2
+
+# Additional dependencies
+pypdf==4.0.1
+typing-extensions==4.9.0
+pydantic==2.6.0
+protobuf==4.25.3
