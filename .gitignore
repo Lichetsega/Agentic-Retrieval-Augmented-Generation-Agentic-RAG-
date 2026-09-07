@@ -1,0 +1,28 @@
+# Virtual Environments
+.venv/
+venv/
+ENV/
+
+# Python Cache
+__pycache__/
+*.py[cod]
+
+# Sensitive keys and environments
+.env
+.env.*
+credentials/
+*.pem
+
+# Local vector databases & embeddings storage
+chroma/
+chroma_db/
+faiss_index/
+*.sqlite3
+*.db
+
+# System files
+.DS_Store
+Thumbs.db
+
+.idea/
+backup/
