@@ -1,4 +1,4 @@
-# 🇪🇹 Visit Ethiopia: Agentic RAG Assistant
+# 🇪🇹 Agentic RAG Assistant
 
 A multi-agent, Retrieval-Augmented Generation (RAG) assistant designed for Ethiopian tourism, cultural heritage, and travel logistics. Built with LangChain, ChromaDB, Google Gemini, and ChatOllama, the system features autonomous supervisor routing, domain-specialized sub-agents, multi-query hybrid retrieval, real-time tool augmentation, and empirical faithfulness verification.
 
@@ -42,7 +42,6 @@ A multi-agent, Retrieval-Augmented Generation (RAG) assistant designed for Ethio
                                          │
                                          ▼
                             [Live External Tool Injection]
-                           (Real-Time Exchange Rates USD/EUR -> ETB)
                                          │
                                          ▼
                        [Domain Sub-Agent Context Synthesis]
@@ -53,7 +52,11 @@ A multi-agent, Retrieval-Augmented Generation (RAG) assistant designed for Ethio
                                          │
                                          ▼
                                   Final Answer
-⚡ Core Capabilities
+
+```
+# ⚡ Core Capabilities
+
+```
 Fused Supervisor Planner: Combines intent detection, conversation memory rephrasing, user sentiment analysis, and search query expansion into a single low-latency call.
 
 Specialized Expert Sub-Agents:
@@ -73,7 +76,12 @@ Self-Healing Key Manager: Round-Robin Gemini key rotation that distinguishes cli
 Two-Tier Caching: Exact hash and sequence-matching semantic cache yielding instant responses with 0 API calls for repeated or semantically equivalent questions.
 
 Automated Crawler Scheduler: Background daemon running on East Africa Time (EAT / UTC+3) that re-indexes official national and regional tourism portals with content hash diffing and orphan chunk purging.
-📂 Repository Layout
+
+```
+
+# 📂 Repository Layout
+
+```text
 RAG-Chatbot/
 ├── RAG-Chatbot-from-web-data/
 │   ├── chatbot/
@@ -99,54 +107,73 @@ RAG-Chatbot/
 ├── Visit_Ethiopia_Agentic_RAG_Presentation.pptx
 ├── .gitignore                     # Git tracking exclusions
 └── README.md                      # Project documentation
-🚀 Quickstart & Setup
+```
+# 🚀 Quickstart & Setup
+
 1. Clone the Repository
-Bash
-git clone [https://github.com/Lichetsega/VISIT-ETHIOPIA-RAG-CHATBOT-.git](https://github.com/Lichetsega/VISIT-ETHIOPIA-RAG-CHATBOT-.git)
-cd VISIT-ETHIOPIA-RAG-CHATBOT-
+   
+```
+        Bash
+        
+        git clone https://github.com/Lichetsega/Agentic-Retrieval-Augmented-Generation-Agentic-RAG-.git
+        
+        cd RAG-CHATBOT/RAG-Chatbot-from-web-data
+```
+
 2. Configure Environment Variables
-Create a .env file inside RAG-Chatbot-from-web-data/:
+   
+```
+        Create a .env file inside RAG-Chatbot-from-web-data/:
+         and inside the .env file add your API keys and the other mentioned files
+         
+        Google Gemini API Keys (Supports multiple keys for automatic failover)
+        
+        GOOGLE_API_KEY_1="your_gemini_api_key_1"
+        
+        GOOGLE_API_KEY_2="your_gemini_api_key_2"
+        
+        Ollama Fallback (Optional local fallback)
+        
+        OLLAMA_MODEL="llama3.1:8b-instruct-q4_K_M"
+        
+        OLLAMA_BASE_URL="http://localhost:11434"
+        
+        API Server Security
+        
+        CHATBOT_API_KEY="your_api_auth_key"
+        
+        REQUIRE_API_KEY="false"
+```
 
-Code snippet
-# Google Gemini API Keys (Supports multiple keys for automatic failover)
-GOOGLE_API_KEY_1="your_gemini_api_key_1"
-GOOGLE_API_KEY_2="your_gemini_api_key_2"
-
-# Ollama Fallback (Optional local fallback)
-OLLAMA_MODEL="llama3.1:8b-instruct-q4_K_M"
-OLLAMA_BASE_URL="http://localhost:11434"
-
-# API Server Security
-CHATBOT_API_KEY="your_api_auth_key"
-REQUIRE_API_KEY="false"
 3. Install Dependencies
-Bash
-cd RAG-Chatbot-from-web-data
-pip install -r requirements.txt
+   
+```
+        Bash
+        cd RAG-Chatbot-from-web-data
+        pip install -r requirements.txt
+```
 4. Ingest Official Data Sources
-Bash
-cd chatbot
-python ingest.py
+   
+```
+        Bash
+        cd chatbot
+        python ingest.py
+```
 5. Launch the Interfaces
-Interactive Streamlit Web UI:
-
-Bash
-streamlit run app.py
-Production Flask REST API:
-
-Bash
-python api_server.py
-Standalone Midnight Web Crawler Scheduler:
-
-Bash
-python scheduler.py --mode midnight
-
+   
+```
+        Bash
+        python api_server.py
+        Standalone Midnight Web Crawler Scheduler:
+        
+        Interactive Streamlit Web UI:
+        
+        Bash
+        streamlit run app.py
+        Production Flask REST API:
+        
+        Bash
+        python scheduler.py --mode midnight
+```  
 ---
 
-### Step 3: Stage, Commit, and Push to GitHub
-
-Open your Command Prompt inside `C:\Users\liche\Desktop\RAG-Chatbot` and run[cite: 28]:
-
-```cmd
-git add .
-git status
