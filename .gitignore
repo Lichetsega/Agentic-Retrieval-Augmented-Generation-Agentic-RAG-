@@ -21,12 +21,9 @@ credentials/
 *.pem
 
 # Local Vector Databases & Runtime Data
-data/chroma/
-**/data/chroma/
 *.sqlite3
 *.db
-crawl_history.json
-**/crawl_history.json
+
 
 # Local Backups & OS files
 backup/
