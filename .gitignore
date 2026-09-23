@@ -1,30 +1,34 @@
-# Virtual Environments
-**/.venv/
+# Virtual Environments & IDE
+.venv/
 venv/
 ENV/
+.idea/
+.vscode/
 
-# Python Cache
-**/__pycache__/
+# Python Cache & Notebooks
+__pycache__/
 *.py[cod]
+.ipynb_checkpoints/
+*/__pycache__/
+*/*/__pycache__/
 
-# Sensitive keys and environments
+# Sensitive Keys & Environment Variables (at root or in subfolders)
+.env
+.env.*
 **/.env
 **/.env.*
 credentials/
 *.pem
 
-# Local vector databases & embeddings storage
-chroma/
-chroma_db/
-faiss_index/
+# Local Vector Databases & Runtime Data
+data/chroma/
+**/data/chroma/
 *.sqlite3
 *.db
+crawl_history.json
+**/crawl_history.json
 
-# System files
+# Local Backups & OS files
+backup/
 .DS_Store
 Thumbs.db
-
-**/.ipynb_checkpoints/
-**/data/
-.idea/
-backup/

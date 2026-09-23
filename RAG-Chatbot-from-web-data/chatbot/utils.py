@@ -19,9 +19,6 @@ from urllib.parse import urlparse
 # LangChain Imports
 from langchain_community.chat_models import ChatOllama
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_chroma import Chroma
-from chromadb.config import Settings
-from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_core.documents import Document
 
 # Local Imports
@@ -30,43 +27,23 @@ from text_to_doc import get_doc_chunks
 from web_crawler import crawl_website
 from prompt import get_prompt
 from api_key_manager import api_key_manager
-# ==================== GLOBAL CONFIGURATION ====================
+# Core Shared Utilities Import
+from core_utils import (
+    get_chroma_client,
+    format_chat_history,
+    stringify_chat_history,
+    build_memory_context,
+    clean_meta_talk,
+    extract_clean_text,
+    format_live_currency_context,
+)
 
-EMBEDDINGS = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
-
-BASE_DIR = Path(__file__).resolve().parent
-CHROMA_PERSIST_DIR = str(BASE_DIR / "data" / "chroma")
-Path(CHROMA_PERSIST_DIR).mkdir(parents=True, exist_ok=True)
-COLLECTION_NAME = "website_data"
-
-
-# ==================== GLOBAL STATE MANAGEMENT ====================
+_stringify_chat_history = stringify_chat_history
+_build_memory_context = build_memory_context
 
 _hybrid_retriever = None
 _current_chain = None
-
-# Public flag used by app.py sidebar status
 LLM_AVAILABLE = True
-
-# Ollama circuit-breaker state
-_ollama_fail_count = 0
-_ollama_retry_after = 0.0
-
-# ==================== 1. VECTOR DATABASE ENGINE ====================
-
-def get_chroma_client() -> Chroma:
-    """Create or connect to the persisted Chroma collection."""
-    settings = Settings(
-        anonymized_telemetry=False,
-        is_persistent=True,
-        persist_directory=CHROMA_PERSIST_DIR,
-    )
-    return Chroma(
-        collection_name=COLLECTION_NAME,
-        embedding_function=EMBEDDINGS,
-        persist_directory=CHROMA_PERSIST_DIR,
-        client_settings=settings,
-    )
 # ==================== 2. DATA INGESTION (CRAWL & STORE) ====================
 def store_docs(url: str) -> bool:
     """
@@ -74,7 +51,6 @@ def store_docs(url: str) -> bool:
     and automatically purge orphaned URLs that no longer exist on the site.
     """
     vector_store = get_chroma_client()
-
     crawled_data = crawl_website(url)
     if not crawled_data:
         print("❌ Crawl produced no pages. Skipping storage.")
@@ -129,7 +105,7 @@ def store_docs(url: str) -> bool:
         chunks_modified = True
 
     # =================================================================
-    # 🧹 NEW STEP 6: ORPHANED CONTENT CLEANUP (DELETED PAGES)
+    # STEP 6: ORPHANED CONTENT CLEANUP (DELETED PAGES)
     # =================================================================
     print(f"\n🧼 Checking for orphaned pages linked to {url}...")
     try:
@@ -254,170 +230,7 @@ def _record_ollama_success() -> None:
     _ollama_fail_count = 0
     _ollama_retry_after = 0.0
 
-# ==================== 5. SMART ROUTING (GREETINGS & FOLLOW-UPS) ====================
-
-def is_greeting(question: str) -> bool:
-    q = question.lower().strip().replace("?", "")
-    greetings = {
-        "hi",
-        "hello",
-        "hey",
-        "selam",
-        "good afternoon",
-        "good evening",
-        "how are you",
-        "how's it going",
-        "yo",
-        "morning",
-        "afternoon",
-    }
-    return q in greetings
-
-def is_identity_query(question: str) -> bool:
-    q = re.sub(r'[^\w\s]', '', question.lower()).strip()
-    identity_triggers = {
-        # Identity
-        "who are you",
-        "who is this",
-        "what is this",
-        "who am i speaking to",
-        "who am i talking to",
-        "who is behind this",
-        "who is on the other side",
-        "what is your name",
-        "whats your name",
-        "introduce yourself",
-        "tell me about yourself",
-        "tell me who you are",
-        # Creator / origin
-        "who made you",
-        "who built you",
-        "who created you",
-        "who developed you",
-        "who is your creator",
-        "who is your developer",
-        "who is behind you",
-        # Technology / architecture
-        "what are you made of",
-        "what are you made off",
-        "what technology are you",
-        "what technology powers you",
-        "what engine do you use",
-        "what architecture is this",
-        "what llm is this",
-        "what llm are you",
-        "what model are you",
-        "what model is this",
-        "is this rag",
-        "are you a rag",
-        "are you rag",
-        "how do you work",
-        "how does this work",
-        "where do you get your info",
-        "where do you get your information",
-        "where do you get your data",
-        # System / instructions
-        "what is your system prompt",
-        "show me your system prompt",
-        "what are your instructions",
-        "show me your instructions",
-        "what are your rules",
-        "show me your code",
-        "what is your code",
-        # LLM identity checks
-        "are you google",
-        "are you gemini",
-        "are you chatgpt",
-        "are you gpt",
-        "are you openai",
-        "are you deepseek",
-        "are you meta",
-        "are you llama",
-        "are you ollama",
-        "are you claude",
-        "are you an ai",
-        "are you a bot",
-        "are you a robot",
-        "are you human",
-        "are you a machine",
-        # Parameters / internals
-        "what is your temperature",
-        "what is your context window",
-        "what are your parameters",
-        "what version are you",
-    }
-    if any(trigger in q for trigger in identity_triggers):
-        return True
-    tech_keywords = {"google", "gemini", "openai", "chatgpt", "llama", "claude"}
-    words = q.split()
-    if any(word in words for word in tech_keywords):
-        return True
-
-    return False
-
-def get_greeting_response(question: str) -> str:
-    return """🇪🇹 **Selam! Welcome to the Visit Ethiopia Travel Assistant!** I'm here to help you explore the Land of Origins. I can assist with:
-- 🏛️ **Historical Sites** (Lalibela, Axum, Gondar)
-- 🏔️ **Nature** (Simien Mountains, Bale Mountains)
-- 🍲 **Culture** (Cuisine, Festivals, Coffee)
-
-What would you like to explore today? ✨"""
-
-def get_identity_response() -> str:
-    return """I am the Visit Ethiopia Travel Assistant, a specialized digital guide designed specifically to showcase the wonders of the Land of Origins. 🇪🇹
-
-My knowledge is built from the official records of Ethiopia's national and regional tourism bureaus to ensure you get the most accurate travel information. Rather than discussing my technical background, I’d love to tell you more about Ethiopia!
-
-Are you interested in exploring our historical landmarks, national parks, or our vibrant cultural festivals?"""
-
-
-def format_chat_history(raw_history: list) -> List[Tuple[str, str]]:
-    formatted: List[Tuple[str, str]] = []
-    if not raw_history:
-        return formatted
-
-    last_user_msg = None
-    for msg in raw_history:
-        if not isinstance(msg, dict):
-            continue
-
-        content = msg.get("content", "").strip()
-        role = msg.get("role")
-
-        # Skip the initial bot greeting message safely without exact string matching
-        if role == "assistant" and ("Welcome to the Visit Ethiopia" in content or "Selam!" in content):
-            continue
-
-        if role == "user":
-            last_user_msg = content
-        elif role == "assistant" and last_user_msg is not None:
-            formatted.append((last_user_msg, content))
-            last_user_msg = None
-
-    return formatted
-
-def _stringify_chat_history(pairs: List[Tuple[str, str]]) -> str:
-    if not pairs:
-        return ""
-    lines = []
-    for user_msg, ai_msg in pairs:
-        lines.append(f"User: {user_msg}")
-        lines.append(f"Assistant: {ai_msg}")
-    return "\n".join(lines)
-
-def _build_memory_context(pairs: List[Tuple[str, str]], memory_pairs: int = 3) -> str:
-    """
-    Build compact memory context from the last N conversation pairs.
-    This is injected into generation prompt, not used as primary retrieval query.
-    """
-    if not pairs:
-        return ""
-    recent_pairs = pairs[-memory_pairs:]
-    lines = []
-    for user_msg, ai_msg in recent_pairs:
-        lines.append(f"User: {user_msg}")
-        lines.append(f"Assistant: {ai_msg}")
-    return "\n".join(lines)
+# Note: Greeting heuristics, identity queries, and chat history formatting are centralized in core_utils.py
 
 _FILLER_PHRASES = re.compile(
     r'\b(tell me about|tell me more|what is|what are|can you|i want to know about|explain|describe|give me info on|give me information about)\b',
@@ -475,7 +288,8 @@ def _llm_call(
 ):
     """Ollama fallback LLM call path with normalized output extraction."""
     max_attempts = 1
-    context_text = "\n\n".join([doc.page_content for doc in docs])
+    raw_docs_text = "\n\n".join([doc.page_content for doc in docs])
+    context_text = f"{format_live_currency_context()}\n\n{raw_docs_text}"
     chat_history_text = _stringify_chat_history(formatted_history)
 
     last_error = None
@@ -518,14 +332,20 @@ def _gemini_call(
     memory_context: str,
 ):
     """Gemini primary path with API-key rotation and retry semantics."""
-    context_text = "\n\n".join([doc.page_content for doc in docs])
+    raw_docs_text = "\n\n".join([doc.page_content for doc in docs])
+    context_text = f"{format_live_currency_context()}\n\n{raw_docs_text}"
     chat_history_text = _stringify_chat_history(formatted_history)
 
     tried_keys = set()
     max_attempts = max(1, len(api_key_manager.keys)) if hasattr(api_key_manager, "keys") else 1
     last_error = None
 
-    fallback_models = ["gemini-2.5-flash", "gemini-2.5-flash-lite"]
+    fallback_models = [
+        "gemini-2.5-flash",
+        "gemini-2.5-flash-lite",
+        "gemini-1.5-flash",
+        "gemini-3.5-flash-lite",
+    ]
     for _ in range(max_attempts):
         key = api_key_manager.get_next_available_key()
         if not key or key in tried_keys:
@@ -538,7 +358,7 @@ def _gemini_call(
                 model = ChatGoogleGenerativeAI(
                     model=current_model,
                     google_api_key=key,
-                    temperature=0.2,
+                    temperature=0.0,
                     max_retries=int(os.getenv("GEMINI_MAX_RETRIES", "0")),
                 )
                 chain = get_prompt() | model
@@ -553,9 +373,8 @@ def _gemini_call(
                     "context": context_text,
                 })
 
-                answer = getattr(result, "content", None)
-                if answer is None:
-                    answer = result.get("content") if isinstance(result, dict) else str(result)
+                answer = extract_clean_text(result)
+                answer = clean_meta_talk(answer)
 
                 api_key_manager.mark_key_success(key)
                 return {"answer": answer}
@@ -564,28 +383,110 @@ def _gemini_call(
                 last_error = e
                 msg = str(e).lower()
 
-                # 1. Catch Model Overload / Server Errors
-                # If the specific model is busy (503), overloaded, or timed out, fallback to the Lite model.
-                if any(x in msg for x in ["overloaded", "busy", "503", "500", "timeout"]):
-                    print(f"⚠️ {current_model} is busy/unavailable. Falling back to the next model...")
-                    continue  # Try the next model in the fallback_models list
+                # 1. Safeguard: Catch Client / Invalid Input / Safety Errors -> FAIL FAST! Do NOT rotate keys!
+                if api_key_manager.is_client_error(e):
+                    print(f"🛑 Client/Input Error: '{e}' - Failing fast without key rotation to protect API key quotas.")
+                    raise e
 
-                # 2. Catch Key/Quota Errors
-                # If it's a rate limit or auth issue, the model isn't the problem; the key is.
-                if any(x in msg for x in
-                       ["quota", "rate", "429", "permission", "api key", "invalid", "unauthenticated"]):
-                    print(f"⚠️ API Key Quota/Auth error. Rotating to the next key...")
-                    api_key_manager.mark_key_failed(key)
-                    break  # Break out of the inner model loop to grab the next API key
-
-                # 3. Catch Model Config Errors
-                if "not_found" in msg or "model" in msg:
-                    print(f"⚠️ Model {current_model} not found. Skipping to next model...")
+                # 2. Catch Model Config / 404 Errors -> Try next model on SAME key!
+                if any(x in msg for x in ["not_found", "404", "model"]):
+                    print(f"⚠️ Model {current_model} not available on key. Trying next model...")
                     continue
 
-                raise
+                # 3. Catch Model Overload / Server Errors
+                if any(x in msg for x in ["overloaded", "busy", "503", "500", "timeout"]):
+                    print(f"⚠️ {current_model} is busy/unavailable. Falling back to the next model...")
+                    continue
+
+                # 4. Catch Key/Quota Errors -> Rotate to next key!
+                if api_key_manager.is_quota_error(e):
+                    print(f"⚠️ API Key Quota/Auth error ({api_key_manager._mask_key(key)}). Rotating to next key...")
+                    api_key_manager.mark_key_failed(key, error=e)
+                    break
+
+                raise e
 
     raise Exception(f"Gemini generation failed: {last_error}")
+
+_agentic_engine = None
+
+def get_agentic_rag_engine():
+    """
+    This function creates and holds a single, shared instance of `LangChainAgenticRAG`.
+    """
+    global _agentic_engine
+    if _agentic_engine is None:
+        from langchain_agent import LangChainAgenticRAG
+        _agentic_engine = LangChainAgenticRAG(retriever_getter=get_hybrid_retriever)
+    return _agentic_engine
+
+def get_agentic_response(
+    question: str,
+    organization_name: str,
+    organization_info: str,
+    contact_info: str,
+    chat_history: list = None,
+) -> dict:
+    """
+    Agentic RAG pipeline execution returning full result dictionary (answer + step traces).
+    """
+    global LLM_AVAILABLE
+    if not question or not question.strip():
+        return {
+            "answer": "How can I help you today? 🇪🇹",
+            "route": "greeting",
+            "trace_logs": ["Empty question received."],
+            "docs": [],
+            "is_grounded": True,
+            "execution_time_sec": 0.0
+        }
+
+    formatted_history = format_chat_history(chat_history or [])
+    chat_history_str = _stringify_chat_history(formatted_history)
+    memory_context = _build_memory_context(formatted_history, memory_pairs=3)
+
+    engine = get_agentic_rag_engine()
+    try:
+        res = engine.run(
+            question=question,
+            organization_name=organization_name,
+            organization_info=organization_info,
+            contact_info=contact_info,
+            chat_history_text=chat_history_str,
+            memory_context=memory_context,
+        )
+        LLM_AVAILABLE = True
+        return res
+    except Exception as e:
+        print(f"⚠️ Agentic RAG execution failed: {e}. Falling back to standard pipeline.")
+        # Fallback to standard RAG pipeline if agentic loop encounters error
+        try:
+            hybrid = get_hybrid_retriever()
+            docs = hybrid.search(query=question, k=10)
+            result_data = _gemini_call(
+                question, docs, organization_name, organization_info, contact_info, formatted_history, memory_context
+            )
+            LLM_AVAILABLE = True
+            return {
+                "answer": result_data.get("answer", ""),
+                "route": "retrieve",
+                "trace_logs": [f"Standard RAG fallback executed due to: {e}"],
+                "docs": docs,
+                "is_grounded": True,
+                "execution_time_sec": 0.0
+            }
+        except Exception as fallback_err:
+            print(f"❌ Fallback Error: {fallback_err}")
+            LLM_AVAILABLE = False
+            return {
+                "answer": "I am currently experiencing technical difficulties. Please try again later.",
+                "route": "error",
+                "trace_logs": [f"Error: {fallback_err}"],
+                "docs": [],
+                "is_grounded": False,
+                "execution_time_sec": 0.0
+            }
+
 
 def get_response(
     question: str,
@@ -595,104 +496,14 @@ def get_response(
     chat_history: list = None,
 ) -> str:
     """
-        End-to-end response pipeline with input interception.
-        1. Identity Interception
-        2. Greeting Interception
-        3. RAG (Retrieve -> Generate -> Fallback)
-        """
-    global LLM_AVAILABLE
-    if not question:
-        return "How can I help you today? 🇪🇹"
+    End-to-end response pipeline returning standard text response string.
+    """
+    res = get_agentic_response(
+        question=question,
+        organization_name=organization_name,
+        organization_info=organization_info,
+        contact_info=contact_info,
+        chat_history=chat_history,
+    )
+    return res.get("answer", "")
 
-    if is_identity_query(question):
-        return get_identity_response()
-
-    if is_greeting(question):
-        return get_greeting_response(question)
-    #  PREPARE FOR RAG
-    formatted_history = format_chat_history(chat_history or [])
-    memory_context = _build_memory_context(formatted_history, memory_pairs=3)
-
-    # Expand query for better retrieval
-    retrieval_query = _build_retrieval_query(question, formatted_history)
-    generation_question = _build_generation_question(question, formatted_history)
-
-    print("\n" + "#"*70)
-    print("🔍 DETAILED DEBUG TRACE START")
-    print("#"*70)
-    print(f"👤 RAW QUESTION: {question}")
-    print(f"🔄 RETRIEVAL QUERY: {retrieval_query}")
-    print(f"📝 GENERATION QUESTION: {generation_question}")
-    print("#"*70 + "\n")
-
-    try:
-        hybrid = get_hybrid_retriever()
-        docs = hybrid.search(query=retrieval_query, k=10)
-
-        print("\n" + "="*70)
-        print(f"🧠 CONTEXT SENT TO LLM ({len(docs)} chunks, truncated to 500 chars):")
-        for i, d in enumerate(docs):
-            print(f"\n--- Chunk {i+1} [Source: {d.metadata.get('url', 'Unknown')}] ---")
-            print(d.page_content[:500] + "..." if len(d.page_content) > 500 else d.page_content)
-        print("="*70 + "\n")
-
-    except Exception as e:
-        print(f"❌ Search Error: {e}")
-        return "I am currently unable to access my knowledge base. Please try again later."
-
-    # 1) Try Gemini first (primary)
-    print("🤖 ATTEMPTING GEMINI GENERATION...")
-    try:
-        result_data = _gemini_call(
-            generation_question,
-            docs,
-            organization_name,
-            organization_info,
-            contact_info,
-            formatted_history,
-            memory_context,
-        )
-        answer = result_data.get("answer", "")
-        print(f"\n✅ GEMINI RAW ANSWER:\n{answer}")
-        print("-" * 70)
-        print("="*70 + "\n")
-        LLM_AVAILABLE = True
-        return answer
-
-    except Exception as e:
-        print(f"⚠️ Gemini Error (primary): {e}")
-
-    # 2) Fallback to Ollama
-    if _is_ollama_healthy_now():
-        print("\n🤖 ATTEMPTING OLLAMA FALLBACK GENERATION...")
-        chain = get_chain_with_failover()
-        if chain:
-            try:
-                result_data = _llm_call(
-                    generation_question,
-                    docs,
-                    organization_name,
-                    organization_info,
-                    contact_info,
-                    formatted_history,
-                    memory_context,
-                )
-                answer = result_data.get("answer", "")
-                print(f"\n✅ OLLAMA RAW ANSWER:\n{answer}")
-                print("-" * 70)
-                print("="*70 + "\n")
-                _record_ollama_success()
-                LLM_AVAILABLE = True
-                return answer
-            except Exception as e:
-                print(f"⚠️ Ollama Fallback Error: {e}")
-                if _is_ollama_runtime_error(e):
-                    _record_ollama_failure()
-    else:
-        print("⚠️ OLLAMA IS UNAVAILABLE OR IN COOLDOWN.")
-
-    # 3) Final safe mode fallback
-    print("\n🛡️ ENTERING SAFE MODE FALLBACK")
-    print("="*70 + "\n")
-    LLM_AVAILABLE = False
-    return "I am currently experiencing technical difficulties and cannot connect to my language models. Please try again later or visit the official websites for information."

@@ -1,222 +1,152 @@
-Markdown
+# 🇪🇹 Visit Ethiopia: Agentic RAG Assistant
 
-\# Visit Ethiopia: RAG Chatbot
+A multi-agent, Retrieval-Augmented Generation (RAG) assistant designed for Ethiopian tourism, cultural heritage, and travel logistics. Built with LangChain, ChromaDB, Google Gemini, and ChatOllama, the system features autonomous supervisor routing, domain-specialized sub-agents, multi-query hybrid retrieval, real-time tool augmentation, and empirical faithfulness verification.
 
+---
 
-
-A production-grade Retrieval-Augmented Generation (RAG) assistant designed to provide comprehensive, grounded information regarding Ethiopian destinations, cultural landmarks, national services, and travel logistics\[cite: 4, 6]. The platform indexes official federal and regional tourism portals into a persistent Chroma vector collection and leverages hybrid retrieval to serve accurate responses\[cite: 1, 2, 6].
-
-
-
-\---
-
-
-
-\## Core Capabilities
-
-
-
-\* \*\*Hybrid Retrieval (Dense + Sparse):\*\* Combines semantic vector similarity with BM25 keyword scoring and fuzzy query expansion to catch regional terminology and exact landmark names\[cite: 2].
-
-\* \*\*Automated Web Crawler:\*\* Headless Selenium and BeautifulSoup crawler tuned to extract domain-specific content across Ethiopian tourism platforms\[cite: 7].
-
-\* \*\*Intelligent Ingestion Pipeline:\*\* MD5 hash validation avoids duplicate indexing, while an automated orphan-purging routine removes outdated chunks\[cite: 6].
-
-\* \*\*Failover \& Multi-Key Management:\*\* Round-robin Google Gemini key rotation with fallback handling to local Ollama execution and safe-mode failover\[cite: 6, 8].
-
-\* \*\*Multi-Channel Serving:\*\* Provides both a Streamlit interactive chat application and a RESTful Flask API server with rate-limiting, session memory, and response caching\[cite: 9, 10].
-
-
-
-\---
-
-
-
-\## Architecture Flow
-
-
+## 🏛️ System Architecture
 
 ```text
+                                  User Query
+                                       │
+                                       ▼
+                       [Streamlit UI / Flask REST API]
+                                       │
+                         [Exact & Semantic Query Cache]
+                          ├── Hit (Similarity >= 0.82) ──► Instant Response (0 API calls)
+                          │
+                          └── Miss
+                                │
+                                ▼
+                   [Fused Supervisor Planner]
+        (Intent Classification + Pronoun Resolution + Sentiment + Multi-Query)
+                                │
+               ┌────────────────┼────────────────┐
+               │                │                │
+          [Greeting]       [Identity]      [Substantive RAG]
+          (0 LLM calls)   (0 LLM calls)          │
+                                                 ▼
+                                     [Sub-Agent Domain Router]
+                          ┌──────────────┬───────┴──────┬──────────────┐
+                          │              │              │              │
+                     [Itinerary]     [Culture]     [Logistics]     [General]
+                          └──────────────┬───────┬──────┴──────────────┘
+                                         │
+                                         ▼
+                             [Hybrid Retrieval Engine]
+                           ├── Dense Semantic (ChromaDB)
+                           └── Sparse Keyword (BM25 + Levenshtein Fuzzy)
+                                         │
+                                         ▼
+                            [Batch Document Evaluator]
+                                         │
+                                         ▼
+                            [Live External Tool Injection]
+                           (Real-Time Exchange Rates USD/EUR -> ETB)
+                                         │
+                                         ▼
+                       [Domain Sub-Agent Context Synthesis]
+                         (Gemini Primary ──► Ollama Fallback)
+                                         │
+                                         ▼
+                            [Faithfulness Verification]
+                                         │
+                                         ▼
+                                  Final Answer
+⚡ Core Capabilities
+Fused Supervisor Planner: Combines intent detection, conversation memory rephrasing, user sentiment analysis, and search query expansion into a single low-latency call.
 
-User Query
+Specialized Expert Sub-Agents:
 
-&#x20;   │
+Itinerary & Route Planning Expert: Separates logistics from activities and accounts for realistic overland travel across Ethiopian terrain.
 
-&#x20;   ▼
+Culture & Heritage Expert: Covers UNESCO heritage sites, festivals (Timkat, Meskel), and Ethiopian cuisine (Injera, coffee ceremonies).
 
-\[Streamlit App (app.py) / Flask API (api\_server.py)]
+Logistics & Visa Expert: Handles e-Visa rules, domestic flight logistics (Ethiopian Airlines), safety advisories, and currency conversions.
 
-&#x20;   │
+Hybrid Search with Fuzzy Vocabulary Expansion: Merges dense vector retrieval with BM25 keyword matching and Levenshtein distance expansion to reliably match localized phonetic spellings (e.g., Wenchi / Wonchi).
 
-&#x20;   ├── In-Memory Query Cache Check (Hit -> Instant Return)
+Live Tool Augmentation: Connects to real-time currency exchange APIs to convert foreign monetary figures ($ USD, € EUR) to Ethiopian Birr (ETB) with daily market disclaimers.
 
-&#x20;   │
+Self-Healing Key Manager: Round-Robin Gemini key rotation that distinguishes client input errors (bad requests, safety blocks) from true 429 quota exhaustion to prevent unnecessary key cooldowns.
 
-&#x20;   └── Query Cache Miss
+Two-Tier Caching: Exact hash and sequence-matching semantic cache yielding instant responses with 0 API calls for repeated or semantically equivalent questions.
 
-&#x20;            │
-
-&#x20;            ├── \[Query Expansion \& Intent Parsing]
-
-&#x20;            │
-
-&#x20;            ├── \[Hybrid Search Engine]
-
-&#x20;            │        ├── Vector Semantic Retrieval (ChromaDB)
-
-&#x20;            │        └── Keyword Search (BM25 + Fuzzy Match)
-
-&#x20;            │
-
-&#x20;            ▼
-
-&#x20;     \[Context Assembly \& Grounding]
-
-&#x20;            │
-
-&#x20;            ▼
-
-&#x20;      \[LLM Generation (Gemini Primary / Ollama Fallback)]
-
-&#x20;            │
-
-&#x20;            ▼
-
-&#x20;       Verified Response
-
-Repository Structure
-
-Plaintext
-
+Automated Crawler Scheduler: Background daemon running on East Africa Time (EAT / UTC+3) that re-indexes official national and regional tourism portals with content hash diffing and orphan chunk purging.
+📂 Repository Layout
 RAG-Chatbot/
-
 ├── RAG-Chatbot-from-web-data/
-
 │   ├── chatbot/
-
-│   │   ├── api\_key\_manager.py     # Gemini key rotation and cooldown management
-
-│   │   ├── api\_server.py          # Flask REST API backend (/ask, /ready, /admin)
-
-│   │   ├── app.py                 # Streamlit interactive UI application
-
-│   │   ├── demo.ipynb             # Interactive testing and indexing notebook
-
-│   │   ├── hybrid\_retriever.py    # Vector + BM25 keyword search engine
-
-│   │   ├── ingest.py              # Batch ingestion CLI runner
-
-│   │   ├── prompt.py              # Grounding prompts and personality templates
-
-│   │   ├── text\_to\_doc.py         # Text cleaner, chunker, and LangChain Document creator
-
-│   │   ├── utils.py               # Core pipeline orchestrator and Chroma connection
-
-│   │   └── web\_crawler.py         # Selenium web scraping utility
-
-│   ├── generate\_pdf\_manual.py     # User manual PDF generation script
-
-│   ├── requirements.txt           # Python dependencies
-
-│   └── SETUP\_GUIDE.md             # Detailed deployment documentation
-
-├── generate\_pptx.py               # Presentation deck generator
-
-├── Visit\_Ethiopia\_Agentic\_RAG\_Presentation.pptx
-
-├── .gitignore
-
-└── README.md
-
-Setup \& Installation
-
-1\. Clone the Repository
-
+│   │   ├── api_key_manager.py     # Gemini key rotation, error classification & cooldowns
+│   │   ├── api_server.py          # Production Flask REST API (/ask, /ready, /admin)
+│   │   ├── app.py                 # Streamlit UI with agent execution traces
+│   │   ├── core_utils.py          # Shared singletons, currency conversion, text cleaners
+│   │   ├── demo.ipynb             # Interactive testing and query demo notebook
+│   │   ├── hybrid_retriever.py    # Hybrid BM25 + Vector search with fuzzy expansion
+│   │   ├── ingest.py              # CLI batch ingestion runner with crawl metadata logging
+│   │   ├── langchain_agent.py     # Supervisor planner, document grading & faithfulness check
+│   │   ├── prompt.py              # System prompts and supervisory instructions
+│   │   ├── query_cache.py         # Exact and semantic similarity cache
+│   │   ├── scheduler.py           # Background web crawler scheduler (00:00:00 EAT)
+│   │   ├── specialized_agents.py  # Domain sub-agents (Itinerary, Culture, Logistics)
+│   │   ├── text_to_doc.py         # Scraped text normalizer and recursive chunker
+│   │   ├── utils.py               # Core pipeline bridge and model fallback orchestrator
+│   │   └── web_crawler.py         # Headless Selenium crawler for tourism bureaus
+│   ├── generate_pdf_manual.py     # Architecture documentation generator
+│   ├── requirements.txt           # Python package dependencies
+│   └── SETUP_GUIDE.md             # Complete deployment documentation
+├── generate_pptx.py               # Project slide deck generator
+├── Visit_Ethiopia_Agentic_RAG_Presentation.pptx
+├── .gitignore                     # Git tracking exclusions
+└── README.md                      # Project documentation
+🚀 Quickstart & Setup
+1. Clone the Repository
 Bash
-
-git clone \[https://github.com/Lichetsega/VISIT-ETHIOPIA-RAG-CHATBOT-.git](https://github.com/Lichetsega/VISIT-ETHIOPIA-RAG-CHATBOT-.git)
-
+git clone [https://github.com/Lichetsega/VISIT-ETHIOPIA-RAG-CHATBOT-.git](https://github.com/Lichetsega/VISIT-ETHIOPIA-RAG-CHATBOT-.git)
 cd VISIT-ETHIOPIA-RAG-CHATBOT-
-
-2\. Configure Environment Variables
-
+2. Configure Environment Variables
 Create a .env file inside RAG-Chatbot-from-web-data/:
 
-
-
 Code snippet
+# Google Gemini API Keys (Supports multiple keys for automatic failover)
+GOOGLE_API_KEY_1="your_gemini_api_key_1"
+GOOGLE_API_KEY_2="your_gemini_api_key_2"
 
-GOOGLE\_API\_KEY\_1="your\_gemini\_api\_key\_1"
+# Ollama Fallback (Optional local fallback)
+OLLAMA_MODEL="llama3.1:8b-instruct-q4_K_M"
+OLLAMA_BASE_URL="http://localhost:11434"
 
-GOOGLE\_API\_KEY\_2="your\_gemini\_api\_key\_2"
-
-CHATBOT\_API\_KEY="your\_optional\_service\_auth\_key"
-
-3\. Run the Services
-
-From the RAG-Chatbot-from-web-data/chatbot directory:
-
-
-
-Start the Flask REST API Server:
-
-
-
+# API Server Security
+CHATBOT_API_KEY="your_api_auth_key"
+REQUIRE_API_KEY="false"
+3. Install Dependencies
 Bash
-
-python api\_server.py
-
-
-
-
-
-Start the Streamlit User Interface:
-
-
-
+cd RAG-Chatbot-from-web-data
+pip install -r requirements.txt
+4. Ingest Official Data Sources
 Bash
-
-streamlit run app.py
-
-
-
-
-
-Ingest Data Sources Manually:
-
-
-
-Bash
-
+cd chatbot
 python ingest.py
+5. Launch the Interfaces
+Interactive Streamlit Web UI:
 
+Bash
+streamlit run app.py
+Production Flask REST API:
 
+Bash
+python api_server.py
+Standalone Midnight Web Crawler Scheduler:
 
-\---
+Bash
+python scheduler.py --mode midnight
 
+---
 
+### Step 3: Stage, Commit, and Push to GitHub
 
-\### Step 3: Commit and Push to GitHub
-
-
-
-Run these commands in your Command Prompt (`C:\\Users\\liche\\Desktop\\RAG-Chatbot>`):
-
-
+Open your Command Prompt inside `C:\Users\liche\Desktop\RAG-Chatbot` and run[cite: 28]:
 
 ```cmd
-
 git add .
-
 git status
-
-Verify that no .env files appear in the staged list. Then commit and push:
-
-
-
-DOS
-
-git commit -m "docs: restructure repository layout and update comprehensive README"
-
-git push origin main
-

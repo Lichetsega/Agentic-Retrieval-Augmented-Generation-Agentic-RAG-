@@ -5,11 +5,9 @@ Main Streamlit Application
 
 # ==================== IMPORTS ====================
 import streamlit as st # Streamlit framework for building the web interface
-import requests
 import sys  # System-specific parameters and functions
 import os  # Operating system interfaces (file paths, environment variables)
 from datetime import datetime  # For timestamping chat messages
-from typing import Optional  # Type hinting for better code clarity
 
 # Add the current directory to Python's module search path
 # This allows imports from local modules like 'utils'
@@ -22,15 +20,15 @@ load_dotenv()
 # Import the core chatbot functionality from our custom modules
 # get_response: Main function that processes user questions and returns answers
 # get_chroma_client: Returns connection to our vector database (where tourism data is stored)
-from utils import get_response, get_chroma_client, store_docs
+from utils import  get_agentic_response,  store_docs
 
-SERVER_URL = "http://172.21.22.33:5000/ask"
+SERVER_URL = os.getenv("API_SERVER_URL", "http://localhost:5000/ask")
 
 import requests
 
 def get_remote_response(prompt):
     """Calls the Flask API server to get RAG-based answers"""
-    API_URL = "http://172.21.22.33:5000/ask"
+    API_URL = os.getenv("API_SERVER_URL", SERVER_URL)
 
     clean_history = [
         {"role": msg["role"], "content": msg["content"]}
@@ -47,12 +45,14 @@ def get_remote_response(prompt):
         # Use a timeout so the UI doesn't hang forever if the server is down
         response = requests.post(API_URL, json=payload, timeout=60)
         if response.status_code == 200:
-            return response.json()  # Returns the dict with 'answer', 'sources', etc.
+            return response.json()  # Returns the dict with 'answer', 'sources', 'agent_trace', etc.
         else:
             return None
     except Exception as e:
         print(f"Connection Error: {e}")
         return None
+
+
 # ==================== PAGE CONFIGURATION ====================
 # THIS MUST BE THE FIRST STREAMLIT COMMAND
 # Sets up the browser tab title, icon, layout width, and sidebar default state
@@ -184,35 +184,12 @@ st.markdown("""
 """, unsafe_allow_html=True)  # unsafe_allow_html=True allows raw HTML/CSS injection
 
 # ==================== CONSTANTS ====================
-# These are pre-defined texts that are passed to the AI for context
-ORGANIZATION_NAME = "Visit Ethiopia"
-
-ORGANIZATION_INFO = """
-Visit Ethiopia is the official tourism platform that showcases Ethiopia's rich cultural heritage, 
-historical landmarks, natural attractions, and diverse travel experiences. It provides valuable 
-information about destinations, cultural activities, travel guides, and tourism opportunities 
-across the country.
-
-The platform aims to promote Ethiopia as a global tourist destination by highlighting its 
-ancient history, breathtaking natural beauty, and vibrant cultural diversity. It also supports 
-travelers in planning their visits by offering insights into various destinations, traditions, 
-and travel-related information.
-
-The platform is also a unified travel assistant providing data from federal and regional 
-tourism bureaus including Oromia, Amhara, Tigray, Sidama, and South Ethiopia.
-
-Overall, Visit Ethiopia serves as a comprehensive guide for exploring the country's destinations, 
-culture, heritage, and travel experiences.
-"""
-
-CONTACT_INFO = """
-Official Website: https://visitethiopia.et/
-
-Visit Ethiopia primarily provides informational content to help travelers explore the country. 
-For detailed travel arrangements, bookings, or inquiries, users are advised to consult local 
-tour operators, travel agencies, or accommodation providers. The official website serves as 
-the main source for up-to-date tourism information.
-"""
+from core_utils import (
+    ORGANIZATION_NAME,
+    ORGANIZATION_INFO,
+    CONTACT_INFO,
+    get_chroma_client,
+)
 
 # ==================== HELPER FUNCTIONS ====================
 def is_llm_available() -> bool:
@@ -234,12 +211,36 @@ def get_document_count() -> tuple[int | None, str | None]:
 def ingest_default_sources() -> tuple[int, int]:
     """Index default tourism sources into Chroma and return (success, failed)."""
     source_urls = [
-        "https://visitethiopia.et/",
-        "https://visitoromia.org/",
-        "https://visitamhara.travel/",
-        "https://tourismtigrai.com/",
-        "https://visitsidama.travel/",
-        "https://visitsouthethiopia.et/",
+    "https://visitethiopia.et/",
+    "https://visitoromia.org/",
+    "https://visitamhara.travel/",
+    "https://tourismtigrai.com/",
+    "https://visitsidama.travel/",
+    "https://visitsouthethiopia.et/",
+    "https://www.pmo.gov.et/",
+    "https://mot.gov.et/",
+    "https://mfa.gov.et/",
+    "https://www.mor.gov.et/",
+    "https://motri.gov.et/en",
+    "https://www.motl.gov.et/en",
+    "https://www.mofed.gov.et/",
+    "https://www.moi.gov.et/",
+    "http://www.mint.gov.et/",
+    "https://mopd.gov.et/en/",
+    "https://mui.gov.et/",
+    "https://www.mowe.gov.et/en/",
+    "https://www.mowsa.gov.et/",
+    "https://www.moh.gov.et/",
+    "https://www.ethiopianairlines.com/",
+    "https://www.ethiopianholidays.com/",
+    "https://ics.gov.et/",
+    "https://ecc.gov.et/",
+    "https://combanketh.et/",
+    "https://nbe.gov.et/",
+    "https://www.etoa.travel/",
+    "https://www.stoa-ethiopia.org/",
+    "https://www.aha97.com/",
+    "https://www.ethiopianrun.org/",
     ]
 
     success = 0
@@ -252,6 +253,7 @@ def ingest_default_sources() -> tuple[int, int]:
                 failed += 1
         except Exception:
             failed += 1
+    print(f"{success} files have successfully stored and , {failed} files failed to store")
     return success, failed
 
 def init_session_state():
@@ -262,13 +264,9 @@ def init_session_state():
     if "messages" not in st.session_state:
         st.session_state.messages = [
             {
-                "role": "assistant",  # Who sent the message (user or assistant)
-                "content": """🇪🇹 **Selam! Welcome to the Visit Ethiopia Travel Assistant!**
-
-I'm here to help you explore the beautiful Land of Origins. I can assist you with:
-
-**What would you like to know about Ethiopia today?** ✨""",
-                "timestamp": datetime.now()  # When the message was sent
+                "role": "assistant",
+                "content": "Selam! Welcome to Visit Ethiopia. 🇪🇹 I'm your local travel guide. Whether you're planning a trip, looking for trekking routes, or curious about Ethiopian food and culture, I'm here to help. What would you like to explore today?",
+                "timestamp": datetime.now()
             }
         ]
 
@@ -277,10 +275,10 @@ I'm here to help you explore the beautiful Land of Origins. I can assist you wit
         st.session_state.conversation_count = 0
 
 def process_user_input(user_input: str):
-    """Process what the user typed and generate a response
+    """Process what the user typed/selected via unified HTTP endpoint with fallback.
 
     Args:
-        user_input: The text the user typed in the chat input
+        user_input: The text the user typed in the chat input or selected from suggestions
     """
 
     # STEP 1: Add the user's message to the chat history
@@ -291,26 +289,32 @@ def process_user_input(user_input: str):
     })
     st.session_state.conversation_count += 1  # Increment message counter
 
-    # STEP 2: Generate the assistant's response
-    # Create a chat message container for the assistant's response
+    # STEP 2: Generate the assistant's response via HTTP endpoint or local agent fallback
     with st.chat_message("assistant"):
-        # Show a loading spinner while generating response
-        with st.spinner("🌍 Thinking..."):
+        with st.spinner("🌍 Agentic RAG Thinking..."):
             try:
-                # CALL THE CORE FUNCTION: This sends the question to utils.get_response()
-                # which searches the database and queries the AI model
-                response = get_response(
-                    user_input,  # The user's question
-                    ORGANIZATION_NAME,  # Context about the organization
-                    ORGANIZATION_INFO,  # Detailed organization information
-                    CONTACT_INFO , # Contact details
-                    st.session_state.messages  # pass the history
-                )
+                response_data = get_remote_response(user_input)
+                if response_data:
+                    response = response_data.get("answer", "")
+                    agent_trace = response_data.get("agent_trace", {})
+                    trace_logs = agent_trace.get("trace_logs", [])
+                else:
+                    # Fallback to direct local engine execution if HTTP API server is unreachable
+                    res_dict = get_agentic_response(
+                        user_input,
+                        ORGANIZATION_NAME,
+                        ORGANIZATION_INFO,
+                        CONTACT_INFO,
+                        st.session_state.messages
+                    )
+                    response = res_dict.get("answer", "")
+                    trace_logs = res_dict.get("trace_logs", [])
 
                 # STEP 3: Add the assistant's response to chat history
                 st.session_state.messages.append({
                     "role": "assistant",
                     "content": response,
+                    "trace_logs": trace_logs,
                     "timestamp": datetime.now()
                 })
 
@@ -327,13 +331,12 @@ Please try asking your question differently or refresh the page.
 
 💡 **Tip:** If this keeps happening, you can visit our [official website](https://visitethiopia.et) for travel information."""
 
-                # Add error message to chat
                 st.session_state.messages.append({
                     "role": "assistant",
                     "content": error_msg,
                     "timestamp": datetime.now()
                 })
-                st.rerun()  # Refresh the page
+                st.rerun()
 
 # ==================== SIDEBAR RENDERING ====================
 def render_sidebar():
@@ -481,6 +484,10 @@ def render_chat():
     for message in st.session_state.messages:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
+            if message.get("trace_logs"):
+                with st.expander("🤖 Agent Reasoning & Execution Trace", expanded=False):
+                    for log in message["trace_logs"]:
+                        st.markdown(f"- {log}")
             st.caption(f"🕐 {message['timestamp'].strftime('%I:%M %p')}")
 
     # 2. Handle New User Input
@@ -499,21 +506,40 @@ def render_chat():
 
         # 3. Get and display Assistant Response
         with st.chat_message("assistant"):
-            with st.spinner("Searching Ethiopia's treasures..."):
+            with st.spinner("Searching Ethiopia's treasures with Agentic RAG..."):
                 response_data = get_remote_response(prompt)
 
                 if response_data:
                     full_response = response_data.get("answer", "I'm sorry, I couldn't process that.")
-                    st.markdown(full_response)
-
-                    # Save to history
-                    st.session_state.messages.append({
-                        "role": "assistant",
-                        "content": full_response,
-                        "timestamp": datetime.now()
-                    })
+                    agent_trace = response_data.get("agent_trace", {})
+                    trace_logs = agent_trace.get("trace_logs", [])
                 else:
-                    st.error("Failed to connect to the travel assistant server.")
+                    # Fallback to local execution if HTTP endpoint is unavailable
+                    res_dict = get_agentic_response(
+                        prompt,
+                        ORGANIZATION_NAME,
+                        ORGANIZATION_INFO,
+                        CONTACT_INFO,
+                        st.session_state.messages
+                    )
+                    full_response = res_dict.get("answer", "I'm sorry, I couldn't process that.")
+                    trace_logs = res_dict.get("trace_logs", [])
+
+                st.markdown(full_response)
+                if trace_logs:
+                    with st.expander("🤖 Agent Reasoning & Execution Trace", expanded=False):
+                        for log in trace_logs:
+                            st.markdown(f"- {log}")
+
+                # Save to history
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": full_response,
+                    "trace_logs": trace_logs,
+                    "timestamp": datetime.now()
+                })
+                st.rerun()
+
 # ==================== FOOTER ====================
 def render_footer():
     """Display footer with links at the bottom of the page"""

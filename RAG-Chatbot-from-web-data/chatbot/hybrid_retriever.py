@@ -7,8 +7,8 @@ keyword scoring, then merges both signals into a single ranked result list.
 
 from rank_bm25 import BM25Okapi  # BM25 is the industry standard for keyword matching (like Google Search)
 import re
-from typing import List, Optional
-from thefuzz import fuzz,process
+from typing import List, Optional, Dict
+from thefuzz import fuzz, process
 from langchain_core.documents import Document
 
 
@@ -40,9 +40,16 @@ class HybridRetriever:
             all_data = self.vector_store.get(include=["documents", "metadatas"])
             self.documents = all_data['documents'] or []
             self.metadatas = all_data.get('metadatas') or []
+
             # Create a map to quickly find the ID of a document by its text
-            # Map full content -> index so vector hits can fetch BM25 score quickly.
-            self.doc_map = {content: i for i, content in enumerate(self.documents)}
+            # Create maps to quickly find the index of a document by content and url
+            self.doc_map = {}
+            for i, content in enumerate(self.documents):
+                meta = self.metadatas[i] if i < len(self.metadatas) and isinstance(self.metadatas[i], dict) else {}
+                url = meta.get("url", "")
+                self.doc_map[(content, url)] = i
+                if content not in self.doc_map:
+                    self.doc_map[content] = i
 
             print(f"📚 Processing {len(self.documents)} documents...")
 
@@ -55,13 +62,15 @@ class HybridRetriever:
                 return
 
             # Tokenization: Cleaning text and splitting it into a list of words.
-            # Guard against empty-token documents to avoid BM25 avgdl=0 division errors.
+            # Guard against empty-token documents to avoid BM25 division errors.
             tokenized_docs = []
             for d in self.documents:
                 tokens = re.sub(r'[^\w\s]', ' ', (d or "").lower()).split()
                 tokenized_docs.append(tokens if tokens else ["__empty__"])
 
+            # Build standard BM25 keyword index
             self.bm25 = BM25Okapi(tokenized_docs)
+
             # Build fuzzy vocabulary: collect words >= 3 characters to act as targets
             vocab_set = set()
             for tokens in tokenized_docs:
@@ -83,23 +92,25 @@ class HybridRetriever:
         If a word matches a known token with high confidence, it appends the correct
         term to the query string so BM25 keyword search can catch it.
         """
+        # If vocabulary is empty, return original query unchanged
         if not self._fuzzy_vocab:
             return query
 
+        # Clean query and split into individual word tokens
         query_tokens = re.sub(r'[^\w\s]', ' ', query.lower()).split()
         extra_terms = []
 
         for token in query_tokens:
-            # Only try to fuzzy-expand significant words (e.g., 5+ characters)
-            if len(token) < 5:
+            # Only try to fuzzy-expand significant words (e.g., 3+ characters)
+            if len(token) < 3:
                 continue
 
+            # Compare query token against database vocabulary using Levenshtein distance ratio
             result = process.extractOne(
                 token,
                 self._fuzzy_vocab,
                 scorer=fuzz.ratio,
             )
-
             if result is None:
                 continue
 
@@ -136,39 +147,42 @@ class HybridRetriever:
         tokenized_query = re.sub(r'[^\w\s]', ' ', expanded_query.lower()).split()
         bm25_scores = self.bm25.get_scores(tokenized_query) if self.bm25 else []
 
-        # 3. Merge unique documents into a single candidate dictionary
-        doc_pool = {}  # content -> (doc_object, normalized_vector_score)
+        # 3. Merge unique documents into a single candidate dictionary using (content, url) composite key
+        doc_pool = {}  # (content, url) -> (doc_object, normalized_vector_score, doc_idx)
 
-        # Step 3a: Seed the pool with all the vector hits
+        # Step 3a: Seed the pool with Vector search results & normalize distance score to [0.0, 1.0]
         for doc, score in vector_results:
-            doc_pool[doc.page_content] = (doc, 1.0 - score)  # Convert distance to similarity metric
+            meta = doc.metadata or {}
+            url = meta.get("url", "")
+            key = (doc.page_content, url)
+            norm_vector_score = max(0.0, min(1.0, 1.0 - score))  # Clamp similarity metric to [0.0, 1.0]
+            doc_idx = self.doc_map.get(key, self.doc_map.get(doc.page_content))
+            doc_pool[key] = (doc, norm_vector_score, doc_idx)
 
         # Step 3b: Bring in top BM25 items that vector search might have completely missed
-        # FIXED: Kept strictly outside the vector loop to process reliably
         if self.bm25 and len(bm25_scores) > 0:
             top_bm25_indices = sorted(range(len(bm25_scores)), key=lambda i: bm25_scores[i], reverse=True)[:k * 3]
             for idx in top_bm25_indices:
                 if bm25_scores[idx] <= 0:
                     continue
                 content = self.documents[idx]
-                if content not in doc_pool:
-                    # FIXED: Retain source metadatas so citations and grounding do not break
-                    meta = self.metadatas[idx] if idx < len(self.metadatas) else {}
-                    doc_pool[content] = (Document(page_content=content, metadata=meta), 0.0)
+                meta = self.metadatas[idx] if idx < len(self.metadatas) and isinstance(self.metadatas[idx], dict) else {}
+                url = meta.get("url", "")
+                key = (content, url)
+                if key not in doc_pool:
+                    doc_pool[key] = (Document(page_content=content, metadata=meta), 0.0, idx)
 
         # 4. Calculate Global BM25 Max for normalization scaling
         max_bm25 = max(bm25_scores) if len(bm25_scores) > 0 and max(bm25_scores) > 0 else 1
 
         # 5. Score every candidate document in our combined pool
         final_scored_results = []
-        for content, (doc, norm_vector_score) in doc_pool.items():
-            doc_idx = self.doc_map.get(content)
-
-            # Extract normalized BM25 score
-            norm_bm25 = (bm25_scores[doc_idx] / max_bm25) if (doc_idx is not None and max_bm25 > 0) else 0
+        for key, (doc, norm_vector_score, doc_idx) in doc_pool.items():
+            # Extract normalized BM25 score using exact doc_idx
+            norm_bm25 = (bm25_scores[doc_idx] / max_bm25) if (doc_idx is not None and doc_idx < len(bm25_scores) and max_bm25 > 0) else 0
 
             # Calculate weighted linear combination:
-            # $\text{Score} = w_{\text{vector}} \cdot S_{\text{vector}} + w_{\text{keyword}} \cdot S_{\text{keyword}}$
+            # Score = w_vector * S_vector + w_keyword * S_keyword
             combined_score = (vector_weight * norm_vector_score) + (keyword_weight * norm_bm25)
             final_scored_results.append((combined_score, doc))
 
@@ -188,6 +202,27 @@ class HybridRetriever:
         # 7. Sort and Return Top K
         final_scored_results.sort(key=lambda x: x[0], reverse=True)
         return [doc for score, doc in final_scored_results[:k]]
+
+    def multi_search(self, queries: List[str], k: int = 5) -> List[Document]:
+        """
+        Proactive Multi-Query Search:
+        Executes hybrid retrieval across multiple query variations,
+        merges and deduplicates candidate document chunks while preserving source metadata.
+        """
+        if not queries:
+            return []
+
+        unique_docs: Dict[str, Document] = {}
+        for q in queries:
+            if not q or not q.strip():
+                continue
+            retrieved = self.search(query=q.strip(), k=k)
+            for doc in retrieved:
+                if doc.page_content not in unique_docs:
+                    unique_docs[doc.page_content] = doc
+
+        return list(unique_docs.values())
+
 
     def _find_document_index(self, content: str) -> Optional[int]:
         """Internal helper to find where a specific text chunk lives in the index."""

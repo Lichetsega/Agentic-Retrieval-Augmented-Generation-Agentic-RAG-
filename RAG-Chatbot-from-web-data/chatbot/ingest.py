@@ -6,59 +6,60 @@ into the Chroma knowledge base before serving chatbot traffic.
 """
 
 import argparse
+import json
+import os
+import time
 import traceback
+from datetime import datetime
 
 from utils import store_docs
-
-DEFAULT_URLS = [
-    "https://visitethiopia.et/",
-    "https://visitoromia.org/",
-    "https://visitamhara.travel/",
-    "https://tourismtigrai.com/",
-    "https://visitsidama.travel/",
-    "https://visitsouthethiopia.et/",
-    "https://www.pmo.gov.et/",
-    "https://mot.gov.et/",
-    "https://mfa.gov.et/",
-    "https://www.mor.gov.et/",
-    "https://motri.gov.et/en",
-    "https://www.motl.gov.et/en",
-    "https://www.mofed.gov.et/",
-    "https://www.moi.gov.et/",
-    "http://www.mint.gov.et/",
-    "https://mopd.gov.et/en/",
-    "https://mui.gov.et/",
-    "https://www.mowe.gov.et/en/",
-    "https://www.mowsa.gov.et/",
-    "https://www.moh.gov.et/",
-    "https://www.ethiopianairlines.com/",
-    "https://www.ethiopianholidays.com/",
-    "https://ics.gov.et/",
-    "https://ecc.gov.et/",
-    "https://www.moh.gov.et/",
-    "https://combanketh.et/",
-    "https://nbe.gov.et/",
-    "https://www.etoa.travel/",
-    "https://www.stoa-ethiopia.org/",
-    "https://www.aha97.com/",
-    "https://www.ethiopianrun.org/",
-]
+from core_utils import DEFAULT_URLS
 
 def run_ingestion(urls: list[str]) -> tuple[int, int]:
     """Run ingestion for each source URL and return (success_count, failed_count)."""
+    start_time = time.time()
+    start_timestamp = datetime.now().isoformat()
+
     success = 0
     failed = 0
+    details = []
+
     for url in urls:
         try:
             # store_docs() handles crawl + chunk + vector insert for one source.
             if store_docs(url):
                 success += 1
+                details.append({"url": url, "status": "success"})
             else:
                 failed += 1
+                details.append({"url": url, "status": "failed"})
         except Exception as e:
             print(f"❌ Ingestion failed for {url}: {e}")
             traceback.print_exc()
             failed += 1
+            details.append({"url": url, "status": "error", "error": str(e)})
+
+    duration_sec = round(time.time() - start_time, 2)
+
+    # Save metadata log into data/crawl_history.json
+    try:
+        data_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
+        os.makedirs(data_dir, exist_ok=True)
+        history_path = os.path.join(data_dir, "crawl_history.json")
+
+        history_record = {
+            "last_run_timestamp": start_timestamp,
+            "duration_seconds": duration_sec,
+            "total_urls": len(urls),
+            "success_count": success,
+            "failed_count": failed,
+            "details": details
+        }
+        with open(history_path, "w", encoding="utf-8") as f:
+            json.dump(history_record, f, indent=2)
+    except Exception as e:
+        print(f"⚠️ Failed to write crawl_history.json: {e}")
+
     return success, failed
 
 

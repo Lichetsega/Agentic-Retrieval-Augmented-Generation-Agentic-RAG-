@@ -9,7 +9,6 @@ It also handles API auth, rate limiting, caching, and timeout guards.
 """
 
 import os
-import re
 import sys
 import time
 import uuid
@@ -28,12 +27,25 @@ from flask_cors import CORS
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 load_dotenv()
 
-from utils import get_chroma_client, get_response, store_docs  # noqa: E402
+from core_utils import (
+    ORGANIZATION_NAME,
+    ORGANIZATION_INFO,
+    CONTACT_INFO,
+    DEFAULT_INGEST_URLS,
+    get_chroma_client,
+    extract_sources,
+)
+from utils import get_agentic_response
+from ingest import run_ingestion
+from scheduler import start_scheduler_in_background
+
+_extract_sources = extract_sources
 
 # ==================== API SETUP ====================
 
 app = Flask(__name__)
 
+# CORS Setup: restricts access only to approved domain origins (or open in dev)
 allowed_origins = [
     origin.strip()
     for origin in os.getenv("ALLOWED_ORIGINS", "").split(",")
@@ -45,60 +57,15 @@ else:
     CORS(app)
     print("⚠️ ALLOWED_ORIGINS is empty. CORS is currently open for development.")
 
-# ==================== CONFIG ====================
-
-ORGANIZATION_NAME = "Visit Ethiopia"
-ORGANIZATION_INFO = (
-    "Visit Ethiopia is the official tourism platform that showcases Ethiopia's rich cultural "
-    "heritage, historical landmarks, natural attractions, and diverse travel experiences. "
-    "It provides valuable information about destinations, cultural activities, travel guides, "
-    "and tourism opportunities across the country. The platform aims to promote Ethiopia as a "
-    "global tourist destination by highlighting its ancient history, breathtaking natural beauty, "
-    "and vibrant cultural diversity."
-)
-CONTACT_INFO = "https://visitethiopia.et/contact"
-
-REQUEST_TIMEOUT_SECONDS = int(os.getenv("REQUEST_TIMEOUT_SECONDS", "60"))
+# Environment Configurations & Default Safety Limits
+REQUEST_TIMEOUT_SECONDS = int(os.getenv("REQUEST_TIMEOUT_SECONDS", "120"))
 MAX_QUESTION_CHARS = int(os.getenv("MAX_QUESTION_CHARS", "1000"))
 RATE_LIMIT_REQUESTS = int(os.getenv("RATE_LIMIT_REQUESTS", "30"))
 RATE_LIMIT_WINDOW_SECONDS = int(os.getenv("RATE_LIMIT_WINDOW_SECONDS", "60"))
-API_KEY = os.getenv("CHATBOT_API_KEY", "")
+CHATBOT_API_KEY = os.getenv("CHATBOT_API_KEY", "")
 REQUIRE_API_KEY = os.getenv("REQUIRE_API_KEY", "true").lower() in {"1", "true", "yes"}
 
-DEFAULT_INGEST_URLS = [
-    "https://visitethiopia.et/",
-    "https://visitoromia.org/",
-    "https://visitamhara.travel/",
-    "https://tourismtigrai.com/",
-    "https://visitsidama.travel/",
-    "https://visitsouthethiopia.et/",
-    "https://www.pmo.gov.et/",
-    "https://mot.gov.et/",
-    "https://mfa.gov.et/",
-    "https://www.mor.gov.et/",
-    "https://motri.gov.et/en",
-    "https://www.motl.gov.et/en",
-    "https://www.mofed.gov.et/",
-    "https://www.moi.gov.et/",
-    "http://www.mint.gov.et/",
-    "https://mopd.gov.et/en/",
-    "https://mui.gov.et/",
-    "https://www.mowe.gov.et/en/",
-    "https://www.mowsa.gov.et/",
-    "https://www.moh.gov.et/",
-    "https://www.ethiopianairlines.com/",
-    "https://www.ethiopianholidays.com/",
-    "https://ics.gov.et/",
-    "https://ecc.gov.et/",
-    "https://www.moh.gov.et/",
-    "https://combanketh.et/",
-    "https://nbe.gov.et/",
-    "https://www.etoa.travel/",
-    "https://www.stoa-ethiopia.org/",
-    "https://www.aha97.com/",
-    "https://www.ethiopianrun.org/",
-]
-
+# Thread-safe global memory structures
 _rate_lock = Lock()
 _request_buckets = defaultdict(deque)
 _cache_lock = Lock()
@@ -107,43 +74,34 @@ _history_lock = Lock()
 _session_histories = {}
 _executor = ThreadPoolExecutor(max_workers=int(os.getenv("API_WORKERS", "4")))
 
-
-def _json_error(code: str, message: str, status_code: int, request_id: str):
+# Translates technical internal exceptions into polite, user-friendly natural language messages.
+def _json_error(code: str, message: str, request_id: str = ""):
     friendly = {
-        "BAD_REQUEST":    "Your message is too long. Please shorten it and try again. 😊",
-        "RATE_LIMITED":   "You're sending messages too fast. Please wait a moment. 😊",
-        "TIMEOUT":        "This is taking longer than expected. Please try again. 😊",
+        "BAD_REQUEST": "Your message is too long. Please shorten it and try again. 😊",
+        "RATE_LIMITED": "You're sending messages too fast. Please wait a moment. 😊",
+        "TIMEOUT": "This is taking longer than expected. Please try again. 😊",
         "INTERNAL_ERROR": "I'm having trouble right now. Please try again. 😊",
-        "UNAUTHORIZED":   "Access denied. Please contact support.",
-        "NOT_READY":      "The assistant is still starting up. Please try again shortly. 😊",
+        "UNAUTHORIZED": "Access denied. Please contact support.",
+        "NOT_READY": "The assistant is still starting up. Please try again shortly. 😊",
     }
 
     return jsonify({
-        "status":     "success",
-        "answer":     friendly.get(code, "Something went wrong. Please try again. 😊"),
-        "sources":    [],
+        "status": "success",
+        "answer": friendly.get(code, "Please try again. 😊"),
+        "sources": [],
         "latency_ms": 0,
-        "cached":     False,
+        "cached": False,
         "request_id": request_id,
-        "_debug":     {"code": code, "message": message},
+        "_debug": {"code": code, "message": message},
     }), 200
-
-
-def _extract_sources(answer: str):
-    """Extract source URLs from model output for UI/source attribution."""
-    urls = re.findall(r"https?://[^\s)]+", answer or "")
-    return sorted(set(urls))
-
 
 def _is_authorized() -> bool:
     if not REQUIRE_API_KEY:
         return True
-    if not API_KEY:
+    if not CHATBOT_API_KEY:
         return False
     provided = request.headers.get("X-API-Key", "")
-
-    return provided == API_KEY
-
+    return provided == CHATBOT_API_KEY
 
 def _is_rate_limited(client_id: str) -> bool:
     """Sliding-window rate limit using per-client timestamp buckets."""
@@ -157,9 +115,8 @@ def _is_rate_limited(client_id: str) -> bool:
         bucket.append(now)
         return False
 
-
 def _get_cached_answer(cache_key: str):
-    """Read cached response if TTL has not expired."""
+    """Read cached response if TTL(time to live) has not expired."""
     ttl = int(os.getenv("RESPONSE_CACHE_TTL_SECONDS", "180"))
     now = time.time()
     with _cache_lock:
@@ -171,12 +128,10 @@ def _get_cached_answer(cache_key: str):
             return None
         return cached["answer"]
 
-
 def _set_cached_answer(cache_key: str, answer: str):
     """Write response cache entry with timestamp."""
     with _cache_lock:
         _response_cache[cache_key] = {"answer": answer, "ts": time.time()}
-
 
 def _sanitize_history(history: Any):
     """
@@ -196,7 +151,6 @@ def _sanitize_history(history: Any):
             sanitized.append({"role": role, "content": content.strip()})
     return sanitized
 
-
 def _get_effective_history(session_id: str, request_history: Any):
     """
     Use client-provided history when present; otherwise fallback to server session memory.
@@ -211,7 +165,6 @@ def _get_effective_history(session_id: str, request_history: Any):
     with _history_lock:
         return list(_session_histories.get(session_id, []))
 
-
 def _append_session_history(session_id: str, user_query: str, answer: str):
     """Persist latest turn for follow-up questions in same session."""
     if not session_id:
@@ -225,7 +178,6 @@ def _append_session_history(session_id: str, user_query: str, answer: str):
         if len(history) > max_messages:
             _session_histories[session_id] = history[-max_messages:]
 
-
 def _history_fingerprint(chat_history):
     """
     Build a short stable key segment so cache respects conversation state.
@@ -236,11 +188,9 @@ def _history_fingerprint(chat_history):
     raw = json.dumps(tail, sort_keys=True, ensure_ascii=True)
     return str(abs(hash(raw)))
 
-
 @app.route("/health", methods=["GET"])
 def health():
     return jsonify({"status": "ok"}), 200
-
 
 @app.route("/ready", methods=["GET"])
 def ready():
@@ -257,32 +207,49 @@ def ready():
     except Exception:
         return _json_error("NOT_READY", "Service dependencies are not ready.", 503, request_id)
 
-
 @app.route("/admin/reindex", methods=["POST"])
 def admin_reindex():
-    """Protected endpoint to trigger full source re-indexing on demand."""
+    """Protected endpoint to trigger full source re-indexing on demand in background."""
     request_id = str(uuid.uuid4())
     if not _is_authorized():
         return _json_error("UNAUTHORIZED", "Invalid or missing API key.", 401, request_id)
 
-    success = 0
-    failed = 0
-    for url in DEFAULT_INGEST_URLS:
-        try:
-            if store_docs(url):
-                success += 1
-            else:
-                failed += 1
-        except Exception:
-            failed += 1
+    # Submit ingestion to background thread pool so HTTP response is instant (sub-second)
+    _executor.submit(run_ingestion, DEFAULT_INGEST_URLS)
 
     return jsonify({
         "status": "success",
+        "message": "Re-indexing triggered successfully in background.",
         "request_id": request_id,
-        "indexed_sources": success,
-        "failed_sources": failed,
-    }), 200
+        "status_check_endpoint": "/admin/crawl-status"
+    }), 202
 
+@app.route("/admin/crawl-status", methods=["GET"])
+def admin_crawl_status():
+    """Read latest crawl status history recorded by the background scheduler."""
+    request_id = str(uuid.uuid4())
+    data_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
+    history_path = os.path.join(data_dir, "crawl_history.json")
+
+    if not os.path.exists(history_path):
+        return jsonify({
+            "status": "success",
+            "request_id": request_id,
+            "has_run": False,
+            "message": "No crawl history recorded yet. Launch scheduler.py or run ingest.py to initiate."
+        }), 200
+
+    try:
+        with open(history_path, "r", encoding="utf-8") as f:
+            history = json.load(f)
+        return jsonify({
+            "status": "success",
+            "request_id": request_id,
+            "has_run": True,
+            "crawl_history": history
+        }), 200
+    except Exception as e:
+        return _json_error("INTERNAL_ERROR", f"Failed to read crawl status: {e}", 500, request_id)
 
 @app.route("/ask", methods=["POST"])
 def ask_chatbot():
@@ -290,9 +257,7 @@ def ask_chatbot():
     started = time.time()
     request_id = str(uuid.uuid4())
     client_id = request.headers.get("X-Forwarded-For", request.remote_addr or "unknown")
-    print(f'request_id: {request_id}')
-    print(f'client_id: {client_id}')
-    print(f'request: {request}')
+    print(f"\n📥 [API SERVER] Received incoming HTTP POST request from IP: {client_id} (ID: {request_id[:8]})", flush=True)
 
     if not _is_authorized():
         return _json_error("UNAUTHORIZED", "Invalid or missing API key.", 401, request_id)
@@ -304,7 +269,7 @@ def ask_chatbot():
     if not isinstance(data, dict):
         return _json_error("BAD_REQUEST", "Request body must be valid JSON object.", 400, request_id)
 
-    user_query = data.get("question")  # data.get("question")
+    user_query = data.get("question")
     session_id = data.get("session_id")
     if session_id is not None and not isinstance(session_id, str):
         return _json_error("BAD_REQUEST", "'session_id' must be a string when provided.", 400, request_id)
@@ -314,8 +279,8 @@ def ask_chatbot():
         session_id = f"ip-{client_id}"
 
     chat_history = _get_effective_history(session_id, data.get("chat_history"))
-    print(f"📌 session_id: {session_id} | history length: {len(chat_history)}")
-    print(f'the data is: {data}')
+    print(f"👤 Question: \"{user_query}\" (session: {session_id})", flush=True)
+
     if not isinstance(user_query, str):
         return _json_error("BAD_REQUEST", "'question' must be a string.", 400, request_id)
 
@@ -346,19 +311,22 @@ def ask_chatbot():
             "cached": True,
         }), 200
 
+
+
     try:
         future = _executor.submit(
-            get_response,
+            get_agentic_response,
             user_query,
             ORGANIZATION_NAME,
             ORGANIZATION_INFO,
             CONTACT_INFO,
             chat_history,
         )
-        answer = future.result(timeout=REQUEST_TIMEOUT_SECONDS)
+        res_dict = future.result(timeout=REQUEST_TIMEOUT_SECONDS)
+        answer = res_dict.get("answer", "")
         _append_session_history(session_id, user_query, answer)
-        _set_cached_answer(cache_key, answer)
         latency_ms = int((time.time() - started) * 1000)
+        print(f"✅ [API SERVER] Responded in {latency_ms}ms to client IP: {client_id}\n", flush=True)
         return jsonify({
             "status": "success",
             "request_id": request_id,
@@ -366,6 +334,12 @@ def ask_chatbot():
             "sources": _extract_sources(answer),
             "latency_ms": latency_ms,
             "cached": False,
+            "agent_trace": {
+                "route": res_dict.get("route", ""),
+                "is_grounded": res_dict.get("is_grounded", True),
+                "trace_logs": res_dict.get("trace_logs", []),
+                "execution_time_sec": res_dict.get("execution_time_sec", 0.0)
+            }
         }), 200
     except FuturesTimeoutError:
         return _json_error(
@@ -382,7 +356,22 @@ def ask_chatbot():
             request_id,
         )
 
-
 if __name__ == "__main__":
-    print("📡 Visit Ethiopia API is live and listening...")
-    app.run(host="0.0.0.0", port=5000, debug=False)
+    port = int(os.getenv("PORT", "5000"))
+
+    # Launch automated background crawler scheduler (targeting Ethiopian Midnight or custom target time)
+    if os.getenv("ENABLE_BACKGROUND_SCHEDULER", "true").lower() in {"1", "true", "yes"}:
+        scheduler_mode = os.getenv("SCHEDULER_MODE", "midnight")
+        target_hour = int(os.getenv("SCHEDULER_TARGET_HOUR", "0"))
+        target_minute = int(os.getenv("SCHEDULER_TARGET_MINUTE", "0"))
+        run_on_start = os.getenv("SCHEDULER_RUN_ON_STARTUP", "false").lower() in {"1", "true", "yes"}
+        print(f"⏰ [API SERVER] Starting background crawler scheduler (mode: {scheduler_mode})...")
+        start_scheduler_in_background(
+            run_immediately=run_on_start,
+            mode=scheduler_mode,
+            target_hour=target_hour,
+            target_minute=target_minute,
+        )
+
+    print(f"📡 Visit Ethiopia API is live and listening on port {port}...")
+    app.run(host="0.0.0.0", port=port, debug=False)
