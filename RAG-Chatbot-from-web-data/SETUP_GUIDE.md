@@ -123,8 +123,8 @@ Create a configuration file named `.env` inside the `RAG-Chatbot-from-web-data/c
 # =====================================================================
 # Google Gemini API Keys (Multi-Key Automatic Failover & Key Rotation)
 # =====================================================================
-GOOGLE_API_KEY_1=AIzaSyACRPPvdOptcazzjUmVCJV2Sd2x88mLBWs
-GOOGLE_API_KEY_2=AIzaSyChm5oonrV6RU3_ZqoOtL4JpKteLeN3w_Q
+GOOGLE_API_KEY_1=AIzaSyACRPP......
+GOOGLE_API_KEY_2=AIzaSyChm......
 
 # =====================================================================
 # Local Ollama LLM Fallback Configuration
@@ -137,9 +137,9 @@ OLLAMA_COOLDOWN_SECONDS=300
 # =====================================================================
 # API Security & Server Settings
 # =====================================================================
-CHATBOT_API_KEY=LYOqxG-9KM8CcfOtZF9iWr2h0lOvui0OYPimW_0g9OUfHvdQMsh8dbRqbbmzWQCe
+CHATBOT_API_KEY=LYOqxG-.....
 REQUIRE_API_KEY=false
-ALLOWED_ORIGINS=https://visitethiopia.et,http://localhost:8501
+ALLOWED_ORIGINS=you can add allowed origins to access your server it could be ip address or a link 
 REQUEST_TIMEOUT_SECONDS=60
 RATE_LIMIT_REQUESTS=30
 RATE_LIMIT_WINDOW_SECONDS=60
